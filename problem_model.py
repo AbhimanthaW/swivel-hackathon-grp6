@@ -14,6 +14,7 @@ Requires: an ANTHROPIC_API_KEY entry in a .env file next to this script
 """
 
 import json
+import sqlite3
 
 import anthropic
 import pandas as pd
@@ -79,12 +80,16 @@ Ground rules:
   normalized to match how it's written in the reference road list if it's
   one of those roads.
 
-You will be given a reference list of known roads, each with its road class
-and the facility nearest to it where known - prefer matching a report's
-location to one of these exact spellings when it clearly refers to that
-road (use the class/facility info only for the priority judgment above, not
-to invent details the report itself doesn't support), otherwise use your
-best extraction from the report text."""
+Some reports already carry a `matched_road` (plus its `road_class` and
+`nearest_facility`) - this was resolved ahead of time by matching the
+report's location text against the council's known road list, so trust it
+as the road for that report rather than re-deriving one yourself; still use
+your own judgment for `location`, `priority`, etc. based on the report text.
+For reports with no `matched_road`, you will also be given a reference list
+of known roads with their class and nearest facility - use it only to
+normalize spelling if a report clearly refers to one of those roads and to
+inform the priority judgment above, never to invent a location the report
+text doesn't support."""
 
 PROBLEMS_TOOL = {
     "name": "submit_problems",
@@ -131,6 +136,65 @@ PROBLEMS_TOOL = {
 }
 
 
+def match_reports_to_roads(reports: pd.DataFrame, assets: pd.DataFrame) -> pd.DataFrame:
+    """Pre-joins each report to the most specific known road mentioned in its
+    location_text, via an in-memory SQLite query, pulling in that road's
+    class and nearest facility so the model doesn't have to guess at (or
+    mismatch) the road itself.
+
+    Returns `reports` with three added columns - matched_road, road_class,
+    nearest_facility - all None where no known road is mentioned. When a
+    report's text contains more than one known road name as a substring
+    (e.g. "Old Kesbewa Road" also contains "Kesbewa Road"), the longest
+    (most specific) match wins.
+    """
+    # report_id is not guaranteed unique in the source CSV (this data has a
+    # couple of duplicates) - join on row position instead, or a duplicate
+    # report_id would cross-join and mismatch one row's location_text with
+    # another row's match.
+    reports_keyed = reports.reset_index(names="_row_id")
+
+    conn = sqlite3.connect(":memory:")
+    try:
+        reports_keyed.to_sql("reports", conn, index=False)
+        assets.to_sql("assets", conn, index=False)
+
+        matches = pd.read_sql(
+            """
+            WITH roads AS (
+                SELECT road_name,
+                       GROUP_CONCAT(DISTINCT road_class) AS road_class,
+                       GROUP_CONCAT(DISTINCT nearest_facility) AS nearest_facility
+                FROM assets
+                WHERE road_name IS NOT NULL
+                GROUP BY road_name
+            ),
+            ranked AS (
+                SELECT r._row_id,
+                       ro.road_name, ro.road_class, ro.nearest_facility,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY r._row_id ORDER BY LENGTH(ro.road_name) DESC
+                       ) AS rn
+                FROM reports r
+                JOIN roads ro
+                    ON r.location_text IS NOT NULL
+                   AND INSTR(LOWER(r.location_text), LOWER(ro.road_name)) > 0
+            )
+            SELECT _row_id,
+                   road_name AS matched_road,
+                   road_class,
+                   nearest_facility
+            FROM ranked
+            WHERE rn = 1
+            """,
+            conn,
+        )
+    finally:
+        conn.close()
+
+    return reports_keyed.merge(matches, on="_row_id", how="left").drop(columns="_row_id")
+
+
 def build_known_roads_context(assets: pd.DataFrame) -> str:
     lines = []
     for road, group in assets.dropna(subset=["road_name"]).groupby("road_name"):
@@ -151,6 +215,12 @@ def build_report_lines(reports: pd.DataFrame) -> str:
         parts = [f"report_id={r['report_id']}"]
         if pd.notna(r.get("location_text")):
             parts.append(f"location_text={r['location_text']!r}")
+        if pd.notna(r.get("matched_road")):
+            parts.append(f"matched_road={r['matched_road']!r}")
+        if pd.notna(r.get("road_class")):
+            parts.append(f"road_class={r['road_class']}")
+        if pd.notna(r.get("nearest_facility")):
+            parts.append(f"nearest_facility={r['nearest_facility']}")
         if pd.notna(r.get("category")) and r["category"]:
             parts.append(f"category={r['category']}")
         if pd.notna(r.get("urgency")) and r["urgency"]:
@@ -254,6 +324,9 @@ def main():
 
     reports = pd.read_csv(REPORTS_CSV)
     assets = pd.read_csv(ASSETS_CSV)
+    reports = match_reports_to_roads(reports, assets)
+    matched = reports["matched_road"].notna().sum()
+    print(f"Pre-matched {matched} / {len(reports)} reports to a known road via SQLite")
     roads_context = build_known_roads_context(assets)
 
     client = anthropic.Anthropic()  # picks up ANTHROPIC_API_KEY loaded above
