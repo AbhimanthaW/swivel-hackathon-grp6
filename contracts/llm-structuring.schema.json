@@ -66,6 +66,19 @@
           "groupingReason": {
             "type": "string"
           },
+          "confidence": {
+            "description": "Model confidence in this candidate grouping, or null when no meaningful measure is available. Never invented, and never authoritative for prioritization or dispatch.",
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "uncertainties": {
             "type": "array",
             "items": {
@@ -108,6 +121,7 @@
           "workType",
           "location",
           "groupingReason",
+          "confidence",
           "uncertainties",
           "riskSignals"
         ]
