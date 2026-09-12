@@ -173,6 +173,22 @@ def list_source_reports(problem_id: str, page: int = 1, page_size: int = 5):
     return items[start:start + page_size], total
 
 
+def known_report_references() -> set:
+    """All source-report `reference` values (the original CSV report_id)
+    already published from any prior import, so a later upload of the same
+    reports.csv (in full or with a few new rows appended) only feeds the new
+    rows into structuring and counts.
+    """
+    rows = db.conn().execute("SELECT data FROM source_reports").fetchall()
+    refs = set()
+    for r in rows:
+        data = db.loads(r["data"])
+        ref = data.get("reference")
+        if ref is not None:
+            refs.add(str(ref))
+    return refs
+
+
 # ---------------------------------------------------------------- idempotency --
 
 def get_idempotent(key: str):

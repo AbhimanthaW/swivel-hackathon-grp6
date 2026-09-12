@@ -169,8 +169,30 @@ def _run(import_id: str):
         jobs_df = _load_role(import_id, "jobs_history")
         reports_df["received_at"] = reports_df["received_at"].apply(_coerce_datetime)
         jobs_df["completed_at"] = jobs_df["completed_at"].apply(_coerce_datetime)
-        _set_stage(batch, "normalize_sources", status="completed",
-                   message=f"{len(reports_df)} reports, {len(assets_df)} assets, {len(jobs_df)} job records normalized.")
+
+        # Skip reports already published from an earlier import (same
+        # report_id/reference), so re-uploading the same or an
+        # appended-to reports.csv only feeds genuinely new rows into
+        # structuring - duplicates never re-inflate reportCount.
+        reports_df["report_id"] = reports_df["report_id"].astype(str)
+        existing_refs = storage.known_report_references()
+        duplicate_mask = reports_df["report_id"].isin(existing_refs)
+        duplicate_count = int(duplicate_mask.sum())
+        reports_df = reports_df[~duplicate_mask].reset_index(drop=True)
+
+        message = f"{len(reports_df)} new report(s), {len(assets_df)} assets, {len(jobs_df)} job records normalized."
+        if duplicate_count:
+            message = (
+                f"{len(reports_df)} new report(s), {len(assets_df)} assets, {len(jobs_df)} job records normalized "
+                f"({duplicate_count} already-imported report(s) skipped as duplicates)."
+            )
+        _set_stage(batch, "normalize_sources", status="completed", message=message)
+        if duplicate_count:
+            batch["warnings"] = batch["warnings"] + [{
+                "code": "DUPLICATE_REPORTS_SKIPPED",
+                "message": f"{duplicate_count} report(s) matched a report already imported previously and were not reprocessed.",
+                "role": "reports",
+            }]
         batch = storage.save_import(batch)
 
         # -- structure_reports (LLM) -----------------------------------------
@@ -306,7 +328,12 @@ def _run(import_id: str):
                 storage.insert_source_reports(problem_id, source_reports)
 
         batch = storage.get_import(import_id)
-        _set_stage(batch, "publish", status="completed", message=f"{len(enriched)} problems published to the workspace.")
+        publish_message = (
+            f"{len(enriched)} problems published to the workspace."
+            if enriched else
+            "No new problems published - all uploaded reports were already imported previously."
+        )
+        _set_stage(batch, "publish", status="completed", message=publish_message)
         batch["status"] = "completed"
         storage.save_import(batch)
 
