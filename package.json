@@ -1,0 +1,17 @@
+{
+  "name": "muthuwella-works-dispatch",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Frontend and API contract for municipal works dispatch; backend implementation pending.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node scripts/dev.mjs",
+    "dev": "node scripts/dev.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "check": "node --check frontend/app.js && node --check frontend/components.js && node --check frontend/api.js && node --check frontend/imports.js && node --check scripts/dev.mjs && npm test && node scripts/generate-types.mjs --check",
+    "types": "node scripts/generate-types.mjs"
+  }
+}

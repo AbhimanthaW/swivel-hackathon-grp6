@@ -1,3 +1,7 @@
+# Node
+node_modules/
+coverage/
+
 # Python
 __pycache__/
 *.py[cod]
@@ -13,12 +17,20 @@ dist/
 # Secrets - the model API key must never be committed
 .env
 .env.*
+!.env.example
 *.key
 secrets.json
 
 # Local data exports
+data/
+uploads/
+*.sqlite
+*.sqlite3
+*.db
 *.csv
 !backend/tests/fixtures/*.csv
+*.docx
+*.log
 
 # OS / editor
 .DS_Store
