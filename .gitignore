@@ -1,18 +1,38 @@
+# Node
 node_modules/
+coverage/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+
+# Secrets - the model API key must never be committed
 .env
 .env.*
 !.env.example
-.DS_Store
-__pycache__/
-*.pyc
-.venv/
-venv/
+*.key
+secrets.json
+
+# Local data exports
 data/
 uploads/
 *.sqlite
 *.sqlite3
 *.db
 *.csv
+!backend/tests/fixtures/*.csv
 *.docx
 *.log
-coverage/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
