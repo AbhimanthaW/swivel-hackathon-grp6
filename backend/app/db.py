@@ -42,6 +42,13 @@ CREATE TABLE IF NOT EXISTS source_reports (
   data TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_source_reports_problem ON source_reports(problem_id);
+CREATE TABLE IF NOT EXISTS latest_files (
+  role TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  size_bytes INTEGER NOT NULL,
+  row_count INTEGER,
+  updated_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS idempotency (
   key TEXT PRIMARY KEY,
   method TEXT NOT NULL,

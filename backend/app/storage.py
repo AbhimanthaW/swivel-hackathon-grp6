@@ -173,6 +173,34 @@ def list_source_reports(problem_id: str, page: int = 1, page_size: int = 5):
     return items[start:start + page_size], total
 
 
+def get_latest_file(role: str):
+    """The most recently uploaded/validated file recorded for `role`,
+    independent of which import batch it came from - used so `assets` and
+    `jobs_history` (uploaded far less often than `reports`) can be reused by
+    a new batch without re-uploading them every time.
+    """
+    row = db.conn().execute(
+        "SELECT name, size_bytes, row_count, updated_at FROM latest_files WHERE role = ?", (role,)
+    ).fetchone()
+    if not row:
+        return None
+    return {
+        "role": role, "name": row["name"], "sizeBytes": row["size_bytes"],
+        "rowCount": row["row_count"], "updatedAt": row["updated_at"],
+    }
+
+
+def set_latest_file(role: str, name: str, size_bytes: int, row_count):
+    with db.lock():
+        db.conn().execute(
+            """INSERT INTO latest_files (role, name, size_bytes, row_count, updated_at) VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(role) DO UPDATE SET name=excluded.name, size_bytes=excluded.size_bytes,
+                   row_count=excluded.row_count, updated_at=excluded.updated_at""",
+            (role, name, size_bytes, row_count, now_iso()),
+        )
+        db.conn().commit()
+
+
 def known_report_references() -> set:
     """All source-report `reference` values (the original CSV report_id)
     already published from any prior import, so a later upload of the same

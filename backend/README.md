@@ -33,6 +33,25 @@ proxies `/api/*` to this service.
 - `app/config.py` — the crew roster (backend-owned, not derived from any
   export) and LLM model id.
 
+## Reports upload frequently; assets/jobs_history don't
+
+`reports` is expected to change on every run; `assets` and `jobs_history`
+change rarely. Two mechanisms follow from that:
+
+- **New-report dedup**: `normalize_sources` compares every uploaded row's
+  `report_id` against every source-report reference already published from
+  a prior import (`storage.known_report_references`) and only carries the
+  unseen rows into structuring/publication - re-uploading the same or an
+  appended-to `reports.csv` never re-counts or reprocesses old rows.
+- **Carry-forward files**: uploading `assets` or `jobs_history` also saves
+  it to a stable, batch-independent path and records it in the `latest_files`
+  table (`storage.get_latest_file` / `set_latest_file`). `POST /imports`
+  seeds every new draft batch's `files` with the last known-good `assets`/
+  `jobs_history` entry (already `ready`), so a batch can be run after
+  uploading only a fresh `reports.csv` - the coordinator can still replace
+  either file in that batch if it actually changed. `reports` is never
+  carried forward this way; it must be uploaded fresh each run.
+
 ## Known simplifications (hackathon scope)
 
 - Single-process, single-worker: the import pipeline runs on a background

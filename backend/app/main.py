@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from . import storage
 from .config import CREWS, CREW_IDS, MAX_UPLOAD_BYTES
 from .csv_ingest import parse_csv, CsvValidationError
-from .pipeline import run_pipeline, upload_path
+from .pipeline import run_pipeline, upload_path, latest_upload_path, CARRY_FORWARD_ROLES
 
 app = FastAPI(title="Muthuwella Works Dispatch API")
 app.add_middleware(
@@ -287,6 +287,20 @@ async def create_import(idempotency_key: str = Header(None, alias="Idempotency-K
     if replay is not None:
         return replay
     batch = storage.create_import()
+    # assets/jobs_history change far less often than reports; seed a new
+    # draft batch with the last known-good file for each so a new run only
+    # needs a fresh reports.csv unless the coordinator chooses to replace them.
+    seeded = False
+    for role in CARRY_FORWARD_ROLES:
+        latest = storage.get_latest_file(role)
+        if latest:
+            batch["files"].append({
+                "role": role, "name": latest["name"], "status": "ready",
+                "sizeBytes": latest["sizeBytes"], "rowCount": latest["rowCount"], "error": None,
+            })
+            seeded = True
+    if seeded:
+        batch = storage.save_import(batch)
     idempotent_store(idempotency_key, "POST", "/imports", 201, batch)
     return JSONResponse(status_code=201, content=batch)
 
@@ -338,6 +352,10 @@ async def upload_import_file(
         file_entry["rowCount"] = row_count
         with open(upload_path(import_id, role), "wb") as fh:
             fh.write(raw)
+        if role in CARRY_FORWARD_ROLES:
+            with open(latest_upload_path(role), "wb") as fh:
+                fh.write(raw)
+            storage.set_latest_file(role, file_entry["name"], file_entry["sizeBytes"], file_entry["rowCount"])
         if warnings:
             batch["warnings"] = batch["warnings"] + [{"code": "CSV_WARNING", "message": w, "role": role} for w in warnings]
     except CsvValidationError as exc:

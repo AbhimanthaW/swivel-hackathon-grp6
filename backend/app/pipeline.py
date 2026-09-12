@@ -6,6 +6,7 @@ backend; it is not designed for multi-worker deployment.
 """
 import threading
 import traceback
+from pathlib import Path
 import pandas as pd
 
 from . import storage, db
@@ -32,8 +33,17 @@ def fresh_stages():
     return [{"key": k, "label": l, "status": "pending", "progress": None, "message": None} for k, l in STAGE_DEFS]
 
 
+CARRY_FORWARD_ROLES = {"assets", "jobs_history"}
+
+
 def upload_path(import_id: str, role: str) -> str:
     return str(UPLOAD_DIR / f"{import_id}__{role}.csv")
+
+
+def latest_upload_path(role: str) -> str:
+    """Stable, batch-independent location for the most recent good file of
+    `role`, so a later batch can reuse it without a fresh upload."""
+    return str(UPLOAD_DIR / f"latest__{role}.csv")
 
 
 def _set_stage(batch, key, **fields):
@@ -68,7 +78,14 @@ def _coerce_datetime(value):
 
 
 def _load_role(import_id, role):
-    with open(upload_path(import_id, role), "rb") as fh:
+    """Reads this batch's own upload for `role` if it made one; otherwise
+    (assets/jobs_history only) falls back to the last known-good file for
+    that role, carried forward across batches.
+    """
+    path = upload_path(import_id, role)
+    if not Path(path).exists() and role in CARRY_FORWARD_ROLES:
+        path = latest_upload_path(role)
+    with open(path, "rb") as fh:
         raw = fh.read()
     normalized, _, _ = parse_csv(role, raw)
     return normalized
@@ -154,11 +171,17 @@ def _run(import_id: str):
         # -- validate_files ------------------------------------------------
         _set_stage(batch, "validate_files", status="running")
         batch = storage.save_import(batch)
+        carried_over = []
         for role in ("reports", "assets", "jobs_history"):
             f = _find_file(batch, role)
             if not f or f["status"] != "ready":
                 raise RuntimeError(f"File for role '{role}' is not ready.")
-        _set_stage(batch, "validate_files", status="completed", message="All three files present and parsed.")
+            if role in CARRY_FORWARD_ROLES and not Path(upload_path(import_id, role)).exists():
+                carried_over.append(role)
+        message = "All three files present and parsed."
+        if carried_over:
+            message += f" Reused the last uploaded file for: {', '.join(carried_over)}."
+        _set_stage(batch, "validate_files", status="completed", message=message)
         batch = storage.save_import(batch)
 
         # -- normalize_sources ----------------------------------------------
